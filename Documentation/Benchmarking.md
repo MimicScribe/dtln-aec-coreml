@@ -23,13 +23,13 @@ swift run dtln-benchmark --json
 DTLN-aec CoreML Benchmark
 =========================
 Device: MacBook Pro (Apple M1)
-Frames per model: 125 (1.0 seconds of audio)
+Frames per model: 500 (4.0 seconds of audio)
 
 | Model | Params | Load    | Avg     | P99     | RT Ratio | Status |
 |-------|--------|---------|---------|---------|----------|--------|
-| 128   | 1.8M   |   448ms |  0.36ms |  1.58ms |   0.04x  | ✅     |
-| 256   | 3.9M   |   509ms |  0.59ms |  2.79ms |   0.07x  | ✅     |
-| 512   | 10.4M  |   604ms |  1.01ms |  4.45ms |   0.13x  | ✅     |
+| 128   | 1.8M   |   421ms |  0.04ms |  0.74ms |   0.01x  | ✅     |
+| 256   | 3.9M   |   430ms |  0.07ms |  1.25ms |   0.01x  | ✅     |
+| 512   | 10.4M  |   512ms |  0.18ms |  2.97ms |   0.02x  | ✅     |
 
 Real-time requirement: <8ms per frame
 ```
@@ -112,10 +112,10 @@ Example GitHub Actions step:
 
 | Device | 128 units | 256 units | 512 units |
 |--------|-----------|-----------|-----------|
-| M1 Mac | ~0.4ms | ~0.6ms | ~1.0ms |
-| M2 Mac | ~0.3ms | ~0.5ms | ~0.8ms |
-| iPhone 14 | ~0.4ms | ~0.7ms | ~1.1ms |
-| iPhone 12 | ~0.6ms | ~0.9ms | ~1.5ms |
+| M1 Mac | <1ms P99 | <2ms P99 | <3ms P99 |
+| M2 Mac | <1ms P99 | <1ms P99 | <2ms P99 |
+| iPhone 14 | <1ms P99 | <2ms P99 | <3ms P99 |
+| iPhone 12 | <1ms P99 | <2ms P99 | <3ms P99 |
 
 *Actual results vary based on thermal state and system load.*
 

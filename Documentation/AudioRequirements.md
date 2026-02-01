@@ -15,8 +15,9 @@ DTLN-aec has specific audio format requirements. This guide covers what you need
 | Property | Value | Meaning |
 |----------|-------|---------|
 | Block Size | 512 samples | 32ms internal processing window |
-| Block Shift | 128 samples | 8ms effective frame size |
-| Processing Latency | ~8ms | Minimum delay before output |
+| Block Shift | 128 samples | 8ms frame size |
+| End-to-End Latency | ~32ms | Algorithmic delay from STFT buffering |
+| Processing Overhead | <2ms | Neural network inference time |
 
 ## Sample Rate Conversion
 
@@ -64,11 +65,23 @@ let output = processor.processNearEnd(micSamples)
 
 ### Understanding Latency
 
-1. **Algorithmic latency**: 8ms (one block shift)
-2. **Buffering latency**: Variable based on your audio callback size
-3. **Model inference**: <2ms on Apple Silicon
+**End-to-end latency is ~32ms**, determined by the STFT block size (512 samples at 16kHz). This is the same for all model sizes.
 
-Total end-to-end latency is typically 10-20ms depending on your audio pipeline.
+- **Algorithmic latency**: ~32ms (from STFT buffering)
+- **Processing overhead**: <2ms on Apple Silicon (well within the 8ms real-time budget)
+- **Audio pipeline latency**: Additional delay from your app's audio callbacks
+
+### End of Recording
+
+When a recording ends, call `flush()` to retrieve any remaining buffered audio (up to 511 samples / ~32ms):
+
+```swift
+// Get remaining buffered audio at end of recording
+let remaining = processor.flush()
+
+// Reset for next session
+processor.resetStates()
+```
 
 ## Far-End vs Near-End
 

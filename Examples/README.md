@@ -46,15 +46,16 @@ For iOS apps using AVAudioEngine, here's a typical integration pattern:
 ```swift
 import AVFoundation
 import DTLNAecCoreML
+import DTLNAec256  // Import the model package
 
 class AudioManager {
     private let engine = AVAudioEngine()
-    private let processor = DTLNAecEchoProcessor(modelSize: .small)
+    private let processor = DTLNAecEchoProcessor(modelSize: .medium)
     private let processingQueue = DispatchQueue(label: "echo-processing")
 
     func start() async throws {
-        // Load models
-        try await processor.loadModelsAsync()
+        // Load models from the model package bundle
+        try await processor.loadModelsAsync(from: DTLNAec256.bundle)
 
         // Configure audio session
         let session = AVAudioSession.sharedInstance()
@@ -98,6 +99,11 @@ class AudioManager {
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+
+        // Flush any remaining buffered audio
+        let remaining = processor.flush()
+        // Handle remaining samples if needed...
+
         processor.resetStates()
     }
 }
@@ -107,5 +113,6 @@ class AudioManager {
 
 - All examples require 16kHz mono audio
 - The processor is NOT thread-safe - use a serial queue
+- Call `flush()` when recording ends to get remaining buffered audio (~32ms)
 - Call `resetStates()` when starting a new session
 - For best results, feed far-end audio slightly before processing near-end

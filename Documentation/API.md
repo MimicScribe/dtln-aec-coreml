@@ -29,6 +29,7 @@ let processor = DTLNAecEchoProcessor(config: config)
 | `modelSize` | `DTLNAecModelSize` | The model size being used |
 | `numUnits` | `Int` | Number of LSTM units (128, 256, or 512) |
 | `isInitialized` | `Bool` | Whether models are loaded and ready |
+| `pendingSampleCount` | `Int` | Number of samples buffered but not yet output |
 | `averageFrameTimeMs` | `Double` | Average processing time per frame |
 
 ### Constants
@@ -42,24 +43,30 @@ let processor = DTLNAecEchoProcessor(config: config)
 
 ### Methods
 
-#### loadModels()
+#### loadModels(from:)
 
 ```swift
-func loadModels() throws
+func loadModels(from bundle: Bundle? = nil) throws
 ```
 
-Loads CoreML models from the bundle. Call once at startup.
+Loads CoreML models from the specified bundle. Call once at startup.
+
+**Parameters:**
+- `bundle`: The bundle containing model resources (e.g., `DTLNAec256.bundle`). If nil, searches module and main bundles.
 
 **Throws:** `DTLNAecError.modelNotFound` if models aren't in the bundle.
 
-#### loadModelsAsync()
+#### loadModelsAsync(from:)
 
 ```swift
 @available(macOS 10.15, iOS 13.0, *)
-func loadModelsAsync() async throws
+func loadModelsAsync(from bundle: Bundle? = nil) async throws
 ```
 
 Asynchronously loads models without blocking the main thread.
+
+**Parameters:**
+- `bundle`: The bundle containing model resources. If nil, searches module and main bundles.
 
 #### feedFarEnd(_:)
 
@@ -92,6 +99,24 @@ func resetStates()
 ```
 
 Resets LSTM states and clears buffers. Call when starting a new recording session.
+
+#### flush()
+
+```swift
+func flush() -> [Float]
+```
+
+Flushes remaining buffered audio at end of recording.
+
+When a recording ends, there may be samples that haven't been output yet:
+- Pending samples (0-127) waiting for enough samples to form a frame
+- Overlap-add tail (384 samples) from previous frame processing
+
+This method processes any pending samples (zero-padded if needed) and returns all remaining buffered audio.
+
+**Returns:** Remaining buffered audio samples (up to 511 samples, ~32ms at 16kHz).
+
+**Note:** LSTM states are NOT reset by this method, preserving session continuity. Call `resetStates()` separately if starting a new recording session.
 
 ---
 
@@ -136,9 +161,9 @@ Available model sizes.
 
 ```swift
 public enum DTLNAecModelSize: Int, CaseIterable, Sendable {
-    case small = 128   // 1.8M params, ~0.8ms/frame
-    case medium = 256  // 3.9M params, ~0.9ms/frame
-    case large = 512   // 10.4M params, ~1.4ms/frame
+    case small = 128   // 1.8M params, <1ms processing
+    case medium = 256  // 3.9M params, <2ms processing
+    case large = 512   // 10.4M params, <3ms processing
 }
 ```
 
@@ -195,6 +220,7 @@ processingQueue.async {
 
 ```swift
 import DTLNAecCoreML
+import DTLNAec256  // Import the model package
 
 class AudioProcessor {
     private let echoProcessor: DTLNAecEchoProcessor
@@ -209,7 +235,7 @@ class AudioProcessor {
     }
 
     func start() async throws {
-        try await echoProcessor.loadModelsAsync()
+        try await echoProcessor.loadModelsAsync(from: DTLNAec256.bundle)
     }
 
     func processAudio(mic: [Float], speaker: [Float]) -> [Float] {
@@ -219,9 +245,13 @@ class AudioProcessor {
         }
     }
 
-    func reset() {
+    func finishRecording() -> [Float] {
         processingQueue.sync {
+            // Get any remaining buffered audio
+            let remaining = echoProcessor.flush()
+            // Reset for next session
             echoProcessor.resetStates()
+            return remaining
         }
     }
 }

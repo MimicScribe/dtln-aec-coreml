@@ -13,9 +13,9 @@
 // - LSTM states: [1, 2, units, 2] (2 layers, N units, h/c states)
 //
 // Available model sizes:
-// - 128 units: 1.8M params, ~0.4ms/frame on M1
-// - 256 units: 3.9M params, ~0.6ms/frame on M1
-// - 512 units: 10.4M params, ~1.0ms/frame on M1
+// - 128 units: 1.8M params, <1ms processing
+// - 256 units: 3.9M params, <2ms processing
+// - 512 units: 10.4M params, <3ms processing
 
 import Accelerate
 import CoreML
@@ -78,9 +78,9 @@ public struct DTLNAecConfig: Sendable {
 /// Available DTLN-aec model sizes.
 /// Larger models have better quality but higher latency.
 public enum DTLNAecModelSize: Int, CaseIterable, Sendable {
-  case small = 128  // 1.8M params, ~0.8ms/frame on M1
-  case medium = 256  // 3.9M params, ~0.9ms/frame on M1
-  case large = 512  // 10.4M params, ~1.4ms/frame on M1
+  case small = 128  // 1.8M params, <1ms processing
+  case medium = 256  // 3.9M params, <2ms processing
+  case large = 512  // 10.4M params, <3ms processing
 
   public var units: Int { rawValue }
 

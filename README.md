@@ -6,11 +6,15 @@ Neural acoustic echo cancellation for Apple platforms using CoreML.
 
 This package provides a Swift wrapper for [DTLN-aec](https://github.com/breizhn/DTLN-aec), a dual-signal transformation LSTM network that placed **3rd in the Microsoft AEC Challenge 2021**.
 
+**[Watch the demo video →](https://www.youtube.com/watch?v=p9-TGge1_EQ)**
+
 ## Features
 
-- Real-time echo cancellation on Apple Silicon (~0.4ms per 8ms frame on M1)
+- Real-time echo cancellation with ~32ms end-to-end latency
+- 50dB echo suppression with the 256-unit model
+- Sub-millisecond neural network inference on Apple Silicon
 - Three model sizes: 128 units (~7 MB), 256 units (~15 MB), 512 units (~40 MB)
-- **Separate model packages** - only bundle the model size you need
+- **Separate model packages** — only bundle the model size you need
 - Modern Swift API with async/await support
 - Configurable compute units (CPU, GPU, Neural Engine)
 - iOS 16+ and macOS 13+ support
@@ -85,44 +89,26 @@ let processor = DTLNAecEchoProcessor(config: config)
 try processor.loadModels(from: DTLNAec512.bundle)
 ```
 
-## Model Sizes
+## Latency
 
-| Model | Units | Parameters | Bundle Size | Latency (M1) | Use Case |
-|-------|-------|------------|-------------|--------------|----------|
-| `.small` | 128 | 1.8M | ~7 MB | 0.4ms | Low latency, good quality |
-| `.medium` | 256 | 3.9M | ~15 MB | 0.6ms | Balanced |
-| `.large` | 512 | 10.4M | ~40 MB | 1.0ms | Best quality |
+**End-to-end latency: ~32ms** — This is the delay users experience, determined by the STFT buffering required for frequency-domain processing (512 samples at 16kHz). This is the same for all model sizes.
 
-All models run well within real-time requirements (8ms per frame).
+**Processing overhead: <2ms** — The 256-unit model processes each 8ms audio frame in under 2ms on Apple Silicon, well within real-time requirements.
 
-### Understanding Latency
+### Model Comparison
 
-- **Processing time** (shown above): How long the neural network takes to compute output for one 8ms frame. Since all models process in <2ms, they run comfortably faster than real-time.
-- **Algorithmic latency**: The inherent delay from buffering required by the STFT algorithm. DTLN-aec uses 512-sample frames at 16kHz, so the algorithmic latency is ~32ms (one STFT window).
+| Model | Units | Bundle Size | Processing (P99) | Convergence | Suppression | Use Case |
+|-------|-------|-------------|------------------|-------------|-------------|----------|
+| `.small` | 128 | ~7 MB | <1ms | ~1.0s | 49 dB | Smallest bundle |
+| `.medium` | 256 | ~15 MB | <2ms | **~0.3s** | **50 dB** | **Recommended** |
+| `.large` | 512 | ~40 MB | <3ms | ~0.9s | 53 dB | Best quality |
 
-The processing time adds negligibly on top of the algorithmic latency.
+The 256-unit model is recommended for most applications — it has the fastest convergence and excellent suppression with a moderate bundle size.
 
 **Import the corresponding model package:**
 - `DTLNAec128` for `.small`
 - `DTLNAec256` for `.medium`
 - `DTLNAec512` for `.large`
-
-### Model Selection Guide
-
-Each model has different convergence characteristics due to LSTM state initialization:
-
-| Model | Convergence Time | Steady-State Suppression | Best For |
-|-------|------------------|--------------------------|----------|
-| `.small` (128) | ~1.0s | 49 dB | Smallest bundle size |
-| `.medium` (256) | ~0.3s | 50 dB | **Recommended for most apps** |
-| `.large` (512) | ~0.9s | 53 dB | Best quality for long audio |
-
-**Key insight:** The 256-unit model hits a sweet spot with the fastest convergence (~0.3s) and excellent suppression (50 dB). This makes it ideal for most applications, including voice calls and short recordings.
-
-**Recommendations:**
-- **Most applications**: Use `.medium` (256) - best balance of convergence speed, quality, and bundle size
-- For **long audio/podcasts**: Use `.large` (512) for best steady-state suppression
-- For **minimal bundle size**: Use `.small` (128) when binary size is critical
 
 ## Audio Requirements
 
@@ -155,9 +141,9 @@ Sample output on Apple M1:
 ```
 | Model | Params | Load    | Avg     | P99     | RT Ratio | Status |
 |-------|--------|---------|---------|---------|----------|--------|
-| 128   | 1.8M   |   448ms |  0.36ms |  1.58ms |   0.04x  | ✅     |
-| 256   | 3.9M   |   509ms |  0.59ms |  2.79ms |   0.07x  | ✅     |
-| 512   | 10.4M  |   604ms |  1.01ms |  4.45ms |   0.13x  | ✅     |
+| 128   | 1.8M   |   421ms |  0.04ms |  0.74ms |   0.01x  | ✅     |
+| 256   | 3.9M   |   430ms |  0.07ms |  1.25ms |   0.01x  | ✅     |
+| 512   | 10.4M  |   512ms |  0.18ms |  2.97ms |   0.02x  | ✅     |
 ```
 
 ## Testing Echo Cancellation

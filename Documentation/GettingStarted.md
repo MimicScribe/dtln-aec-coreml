@@ -27,12 +27,13 @@ dependencies: [
 
 ```swift
 import DTLNAecCoreML
+import DTLNAec256  // Import the model package you need
 
 // 1. Create the processor (256-unit model recommended for most apps)
 let processor = DTLNAecEchoProcessor(modelSize: .medium)
 
-// 2. Load the models (do this once at startup)
-try processor.loadModels()
+// 2. Load the models from the model package bundle
+try processor.loadModels(from: DTLNAec256.bundle)
 
 // 3. In your audio processing callback:
 // Feed the far-end (speaker) audio as reference
@@ -40,6 +41,10 @@ processor.feedFarEnd(speakerSamples)
 
 // Process the near-end (microphone) audio
 let cleanAudio = processor.processNearEnd(microphoneSamples)
+
+// 4. When recording ends, flush remaining buffered audio
+let remaining = processor.flush()
+processor.resetStates()  // Reset for next session
 ```
 
 ### Using Configuration
@@ -47,12 +52,15 @@ let cleanAudio = processor.processNearEnd(microphoneSamples)
 For more control, use `DTLNAecConfig`:
 
 ```swift
+import DTLNAec512
+
 var config = DTLNAecConfig()
 config.modelSize = .large  // Best quality
 config.computeUnits = .cpuAndNeuralEngine  // Use Neural Engine when available
 config.enablePerformanceTracking = true
 
 let processor = DTLNAecEchoProcessor(config: config)
+try processor.loadModels(from: DTLNAec512.bundle)
 ```
 
 ### Async Model Loading
@@ -60,22 +68,26 @@ let processor = DTLNAecEchoProcessor(config: config)
 Load models without blocking the main thread:
 
 ```swift
+import DTLNAec256
+
 Task {
     let processor = DTLNAecEchoProcessor(modelSize: .medium)
-    try await processor.loadModelsAsync()
+    try await processor.loadModelsAsync(from: DTLNAec256.bundle)
     // Models are ready
 }
 ```
 
 ## Choosing a Model Size
 
-| Model | Quality | Latency | Use Case |
-|-------|---------|---------|----------|
-| `.small` (128 units) | Good | ~0.4ms | Minimal bundle size |
-| `.medium` (256 units) | Great | ~0.6ms | **Recommended for most apps** |
-| `.large` (512 units) | Best | ~1.0ms | Best quality for long audio |
+All models have **~32ms end-to-end latency** (fixed, from STFT buffering).
 
-All models run well within the 8ms real-time budget. The 256-unit model is recommended for most applications due to its fast convergence (~0.3s) and excellent quality.
+| Model | Quality | Processing Overhead | Use Case |
+|-------|---------|---------------------|----------|
+| `.small` (128 units) | Good | <1ms | Smallest bundle size |
+| `.medium` (256 units) | Great | <2ms | **Recommended for most apps** |
+| `.large` (512 units) | Best | <3ms | Best quality for long audio |
+
+All models run well within the 8ms real-time budget. The 256-unit model is recommended for most applications due to its fast convergence (~0.3s) and 50dB echo suppression.
 
 ## What's Next?
 
