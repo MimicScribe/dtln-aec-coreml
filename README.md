@@ -1,6 +1,6 @@
 # DTLN-aec CoreML
 
-> **Note:** This repository is still being dogfooded and has not been thoroughly tested.
+> **Note:** This is a community port, not affiliated with the original DTLN-aec authors. While regression tests verify near-comparable performance, subtle differences from the TensorFlow implementation may exist.
 
 Neural acoustic echo cancellation for Apple platforms using CoreML.
 
