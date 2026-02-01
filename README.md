@@ -60,7 +60,8 @@ try processor.loadModels(from: DTLNAec256.bundle)
 processor.feedFarEnd(systemAudioSamples)  // [Float] at 16kHz
 let cleanAudio = processor.processNearEnd(microphoneSamples)
 
-// Reset when starting a new session
+// When recording ends, get remaining buffered audio
+let remaining = processor.flush()
 processor.resetStates()
 ```
 
