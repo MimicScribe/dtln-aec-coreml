@@ -20,6 +20,7 @@
 import Accelerate
 import CoreML
 import Foundation
+import os
 import os.log
 
 private let logger = Logger(subsystem: "DTLNAecCoreML", category: "EchoProcessor")
@@ -110,7 +111,7 @@ public enum DTLNAecModelSize: Int, CaseIterable, Sendable {
 /// ```
 ///
 /// ## Thread Safety
-/// NOT thread-safe. Call from a single thread or serial queue.
+/// Thread-safe. `feedFarEnd`, `processNearEnd`, and `flush` are protected by an internal lock.
 public final class DTLNAecEchoProcessor {
 
   // MARK: - Constants
@@ -182,6 +183,11 @@ public final class DTLNAecEchoProcessor {
 
   private var framesProcessed: Int = 0
   private var totalProcessingTimeMs: Double = 0
+
+  // MARK: - Thread Safety
+
+  /// Lock protecting feedFarEnd, processNearEnd, and flush for concurrent access
+  private var processingLock = os_unfair_lock()
 
   // MARK: - Initialization
 
@@ -425,6 +431,8 @@ public final class DTLNAecEchoProcessor {
   /// Call this BEFORE processNearEnd for proper echo reference.
   /// - Parameter samples: Audio samples at 16kHz, Float format
   public func feedFarEnd(_ samples: [Float]) {
+    os_unfair_lock_lock(&processingLock)
+    defer { os_unfair_lock_unlock(&processingLock) }
     pendingLoopbackSamples.append(contentsOf: samples)
   }
 
@@ -437,6 +445,9 @@ public final class DTLNAecEchoProcessor {
       logger.warning("DTLN-aec not initialized, passing through")
       return samples
     }
+
+    os_unfair_lock_lock(&processingLock)
+    defer { os_unfair_lock_unlock(&processingLock) }
 
     pendingMicSamples.append(contentsOf: samples)
     var outputSamples: [Float] = []
@@ -497,6 +508,9 @@ public final class DTLNAecEchoProcessor {
   ///
   /// - Returns: Remaining buffered audio samples (pending + overlap-add tail)
   public func flush() -> [Float] {
+    os_unfair_lock_lock(&processingLock)
+    defer { os_unfair_lock_unlock(&processingLock) }
+
     guard isInitialized else {
       let samples = pendingMicSamples.prefix(pendingMicSamples.count)
       pendingMicSamples.removeAll(keepingCapacity: true)

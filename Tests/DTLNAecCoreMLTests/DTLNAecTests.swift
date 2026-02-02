@@ -787,4 +787,133 @@ final class DTLNAecTests: XCTestCase {
       XCTFail("Unexpected error type: \(error)")
     }
   }
+
+  // MARK: - Thread Safety Tests
+
+  func testConcurrentFeedAndProcess() throws {
+    let processor = DTLNAecEchoProcessor(modelSize: .small)
+    try processor.loadModelsFromPackage()
+
+    let iterations = 100
+    let samplesPerIteration = 256
+    let expectation = XCTestExpectation(description: "Concurrent processing completes")
+    expectation.expectedFulfillmentCount = 2
+
+    var farEndSamplesFed = 0
+    var nearEndSamplesProcessed = 0
+    var outputSamplesReceived = 0
+
+    // Thread 1: Feed far-end samples
+    DispatchQueue.global(qos: .userInteractive).async {
+      for _ in 0..<iterations {
+        let farEnd = [Float](repeating: 0.1, count: samplesPerIteration)
+        processor.feedFarEnd(farEnd)
+        farEndSamplesFed += samplesPerIteration
+      }
+      expectation.fulfill()
+    }
+
+    // Thread 2: Process near-end samples
+    DispatchQueue.global(qos: .userInteractive).async {
+      for _ in 0..<iterations {
+        let nearEnd = [Float](repeating: 0.2, count: samplesPerIteration)
+        let output = processor.processNearEnd(nearEnd)
+        nearEndSamplesProcessed += samplesPerIteration
+        outputSamplesReceived += output.count
+      }
+      expectation.fulfill()
+    }
+
+    wait(for: [expectation], timeout: 10.0)
+
+    // Verify no crashes occurred and data was processed
+    XCTAssertEqual(farEndSamplesFed, iterations * samplesPerIteration)
+    XCTAssertEqual(nearEndSamplesProcessed, iterations * samplesPerIteration)
+    // Output may be less due to buffering, but should have some output
+    XCTAssertGreaterThan(outputSamplesReceived, 0)
+  }
+
+  func testConcurrentMultipleProcessors() throws {
+    // Test that multiple processor instances don't interfere with each other
+    let processor1 = DTLNAecEchoProcessor(modelSize: .small)
+    let processor2 = DTLNAecEchoProcessor(modelSize: .small)
+    try processor1.loadModelsFromPackage()
+    try processor2.loadModelsFromPackage()
+
+    let iterations = 50
+    let samples = 512
+    let expectation = XCTestExpectation(description: "Multiple processors complete")
+    expectation.expectedFulfillmentCount = 2
+
+    var output1Total = 0
+    var output2Total = 0
+
+    // Processor 1 on one thread
+    DispatchQueue.global(qos: .userInteractive).async {
+      for i in 0..<iterations {
+        let farEnd = [Float](repeating: Float(i) * 0.01, count: samples)
+        let nearEnd = [Float](repeating: Float(i) * 0.02, count: samples)
+        processor1.feedFarEnd(farEnd)
+        let output = processor1.processNearEnd(nearEnd)
+        output1Total += output.count
+      }
+      expectation.fulfill()
+    }
+
+    // Processor 2 on another thread
+    DispatchQueue.global(qos: .userInteractive).async {
+      for i in 0..<iterations {
+        let farEnd = [Float](repeating: Float(i) * 0.03, count: samples)
+        let nearEnd = [Float](repeating: Float(i) * 0.04, count: samples)
+        processor2.feedFarEnd(farEnd)
+        let output = processor2.processNearEnd(nearEnd)
+        output2Total += output.count
+      }
+      expectation.fulfill()
+    }
+
+    wait(for: [expectation], timeout: 15.0)
+
+    // Both processors should have produced output
+    XCTAssertGreaterThan(output1Total, 0, "Processor 1 should produce output")
+    XCTAssertGreaterThan(output2Total, 0, "Processor 2 should produce output")
+  }
+
+  func testConcurrentFlushWithProcessing() throws {
+    let processor = DTLNAecEchoProcessor(modelSize: .small)
+    try processor.loadModelsFromPackage()
+
+    let expectation = XCTestExpectation(description: "Concurrent flush completes")
+    expectation.expectedFulfillmentCount = 3
+
+    // Thread 1: Feed samples
+    DispatchQueue.global(qos: .userInteractive).async {
+      for _ in 0..<50 {
+        processor.feedFarEnd([Float](repeating: 0.1, count: 128))
+        Thread.sleep(forTimeInterval: 0.001)
+      }
+      expectation.fulfill()
+    }
+
+    // Thread 2: Process samples
+    DispatchQueue.global(qos: .userInteractive).async {
+      for _ in 0..<50 {
+        _ = processor.processNearEnd([Float](repeating: 0.2, count: 128))
+        Thread.sleep(forTimeInterval: 0.001)
+      }
+      expectation.fulfill()
+    }
+
+    // Thread 3: Periodically flush
+    DispatchQueue.global(qos: .userInteractive).async {
+      for _ in 0..<10 {
+        _ = processor.flush()
+        Thread.sleep(forTimeInterval: 0.005)
+      }
+      expectation.fulfill()
+    }
+
+    wait(for: [expectation], timeout: 10.0)
+    // Test passes if no crashes or deadlocks occurred
+  }
 }
