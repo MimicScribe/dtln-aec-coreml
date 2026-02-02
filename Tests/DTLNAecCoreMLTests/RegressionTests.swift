@@ -113,7 +113,8 @@ enum RegressionTestUtils {
       return cached
     }
 
-    let baselinesURL = packageRoot().appendingPathComponent("Tests/Baselines/regression_baselines.json")
+    let baselinesURL = packageRoot().appendingPathComponent(
+      "Tests/Baselines/regression_baselines.json")
     let data = try Data(contentsOf: baselinesURL)
     let baselines = try JSONDecoder().decode(RegressionBaselines.self, from: data)
     _cachedBaselines = baselines
@@ -281,7 +282,9 @@ enum RegressionTestUtils {
 
   /// Time-segmented RMS analysis
   /// Returns (min, max, mean, stddev) of RMS values across segments
-  static func computeSegmentedRMS(_ samples: [Float], segmentMs: Int = 100, sampleRate: Int = 16000)
+  static func computeSegmentedRMS(
+    _ samples: [Float], segmentMs: Int = 100, sampleRate: Int = 16000
+  )
     -> (min: Float, max: Float, mean: Float, stddev: Float)
   {
     let segmentSize = (sampleRate * segmentMs) / 1000
@@ -318,7 +321,9 @@ enum RegressionTestUtils {
   /// Simple spectral energy analysis using band-pass approximation
   /// Returns energy in low (0-500Hz), mid (500-2000Hz), and high (2000-8000Hz) bands
   /// Uses a simple DFT approach for analysis (not optimized, but sufficient for testing)
-  static func computeSpectralEnergy(_ samples: [Float], sampleRate: Int = 16000)
+  static func computeSpectralEnergy(
+    _ samples: [Float], sampleRate: Int = 16000
+  )
     -> (low: Float, mid: Float, high: Float)
   {
     // Use 512-sample FFT frames, hop by 256
@@ -332,9 +337,9 @@ enum RegressionTestUtils {
     let binWidth = Float(sampleRate) / Float(fftSize)
 
     // Band boundaries in bins
-    let lowEnd = Int(500.0 / binWidth)      // 0-500 Hz
-    let midEnd = Int(2000.0 / binWidth)     // 500-2000 Hz
-    let highEnd = Int(8000.0 / binWidth)    // 2000-8000 Hz (or Nyquist)
+    let lowEnd = Int(500.0 / binWidth)  // 0-500 Hz
+    let midEnd = Int(2000.0 / binWidth)  // 500-2000 Hz
+    let highEnd = Int(8000.0 / binWidth)  // 2000-8000 Hz (or Nyquist)
 
     var lowEnergy: Float = 0
     var midEnergy: Float = 0
@@ -394,7 +399,9 @@ enum RegressionTestUtils {
 
   /// Time evolution analysis - shows how RMS changes over the recording
   /// Divides signal into N equal chunks and returns RMS for each
-  static func computeTimeEvolution(_ samples: [Float], chunks: Int = 10, sampleRate: Int = 16000)
+  static func computeTimeEvolution(
+    _ samples: [Float], chunks: Int = 10, sampleRate: Int = 16000
+  )
     -> [(timeSeconds: Float, rms: Float)]
   {
     guard chunks > 0, !samples.isEmpty else { return [] }
@@ -449,7 +456,8 @@ enum RegressionTestUtils {
       print("  RMS: \(String(format: "%.6f", rms))")
       print("  Peak amplitude: \(String(format: "%.6f", peakAmplitude))")
       print("  Crest factor: \(String(format: "%.1f", crestFactorDB)) dB")
-      print("  Convergence ratio (1st half / 2nd half): \(String(format: "%.2f", convergenceRatio))")
+      print(
+        "  Convergence ratio (1st half / 2nd half): \(String(format: "%.2f", convergenceRatio))")
       if convergenceRatio > 1.2 {
         print("    ⚠️  Signal starts loud, gets quieter (slow state convergence)")
       } else if convergenceRatio < 0.8 {
@@ -460,7 +468,9 @@ enum RegressionTestUtils {
       print("  Time evolution (RMS over time):")
       for point in timeEvolution {
         let bar = String(repeating: "█", count: min(50, Int(point.rms * 500)))
-        print("    \(String(format: "%5.1f", point.timeSeconds))s: \(String(format: "%.6f", point.rms)) \(bar)")
+        print(
+          "    \(String(format: "%5.1f", point.timeSeconds))s: \(String(format: "%.6f", point.rms)) \(bar)"
+        )
       }
       print("  Segmented RMS (100ms):")
       print("    Min: \(String(format: "%.6f", segmentedRMS.min))")
@@ -530,10 +540,14 @@ final class RegressionTests128: XCTestCase {
     let coremlFile = samplesDir.appendingPathComponent("farend_singletalk_processed_coreml_128.wav")
 
     guard FileManager.default.fileExists(atPath: pythonFile.path) else {
-      throw XCTSkip("Python reference file not found at: \(pythonFile.path). Generate using python scripts or run swift test --filter RegenerateSamplesTests.")
+      throw XCTSkip(
+        "Python reference file not found at: \(pythonFile.path). Generate using python scripts or run swift test --filter RegenerateSamplesTests."
+      )
     }
     guard FileManager.default.fileExists(atPath: coremlFile.path) else {
-      throw XCTSkip("CoreML output file not found at: \(coremlFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+      throw XCTSkip(
+        "CoreML output file not found at: \(coremlFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+      )
     }
 
     let pythonSamples = try RegressionTestUtils.readWAVFile(pythonFile)
@@ -547,12 +561,15 @@ final class RegressionTests128: XCTestCase {
     print("  Baseline version: \(try RegressionTestUtils.loadBaselines().version)")
     print("  Python samples: \(pythonSamples.count), RMS: \(String(format: "%.6f", pythonRMS))")
     print("  CoreML samples: \(coremlSamples.count), RMS: \(String(format: "%.6f", coremlRMS))")
-    print("  RMS ratio: \(String(format: "%.2f", rmsRatio))x (baseline: \(String(format: "%.2f", pythonRef.rms_ratio))x)")
+    print(
+      "  RMS ratio: \(String(format: "%.2f", rmsRatio))x (baseline: \(String(format: "%.2f", pythonRef.rms_ratio))x)"
+    )
 
     // Verify against baseline thresholds
     XCTAssertLessThan(
       pythonRMS, pythonRef.max_acceptable_rms,
-      "Python reference should achieve near-silence (RMS \(pythonRMS) > max \(pythonRef.max_acceptable_rms))")
+      "Python reference should achieve near-silence (RMS \(pythonRMS) > max \(pythonRef.max_acceptable_rms))"
+    )
 
     XCTAssertLessThan(
       coremlRMS, pythonRef.max_acceptable_rms,
@@ -566,7 +583,8 @@ final class RegressionTests128: XCTestCase {
     let maxAllowedRatio = pythonRef.rms_ratio + tolerance.rms_ratio
     XCTAssertLessThanOrEqual(
       rmsRatio, maxAllowedRatio,
-      "RMS ratio \(String(format: "%.2f", rmsRatio)) regressed from baseline \(String(format: "%.2f", pythonRef.rms_ratio)) (max allowed: \(String(format: "%.2f", maxAllowedRatio)))")
+      "RMS ratio \(String(format: "%.2f", rmsRatio)) regressed from baseline \(String(format: "%.2f", pythonRef.rms_ratio)) (max allowed: \(String(format: "%.2f", maxAllowedRatio)))"
+    )
   }
 
   /// Verify CoreML echo suppression effectiveness using AEC challenge sample
@@ -582,10 +600,14 @@ final class RegressionTests128: XCTestCase {
     let coremlFile = samplesDir.appendingPathComponent("farend_singletalk_processed_coreml_128.wav")
 
     guard FileManager.default.fileExists(atPath: micFile.path) else {
-      throw XCTSkip("Mic input file not found at: \(micFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+      throw XCTSkip(
+        "Mic input file not found at: \(micFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+      )
     }
     guard FileManager.default.fileExists(atPath: coremlFile.path) else {
-      throw XCTSkip("CoreML output file not found at: \(coremlFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+      throw XCTSkip(
+        "CoreML output file not found at: \(coremlFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+      )
     }
 
     let micSamples = try RegressionTestUtils.readWAVFile(micFile)
@@ -600,8 +622,12 @@ final class RegressionTests128: XCTestCase {
     print("  Mic samples: \(micSamples.count)")
     print("  Output samples: \(coremlSamples.count)")
     print("  Mic RMS: \(String(format: "%.6f", micRMS))")
-    print("  Output RMS: \(String(format: "%.6f", coremlRMS)) (baseline: \(String(format: "%.6f", aecBaseline.output_rms)))")
-    print("  Reduction: \(String(format: "%.1f", reductionDB)) dB (baseline: \(String(format: "%.1f", aecBaseline.reduction_db)) dB)")
+    print(
+      "  Output RMS: \(String(format: "%.6f", coremlRMS)) (baseline: \(String(format: "%.6f", aecBaseline.output_rms)))"
+    )
+    print(
+      "  Reduction: \(String(format: "%.1f", reductionDB)) dB (baseline: \(String(format: "%.1f", aecBaseline.reduction_db)) dB)"
+    )
 
     // Detailed analysis
     let outputAnalysis = RegressionTestUtils.analyzeAudio(coremlSamples)
@@ -623,7 +649,8 @@ final class RegressionTests128: XCTestCase {
     let minAllowedReduction = aecBaseline.reduction_db - tolerance.db
     XCTAssertGreaterThanOrEqual(
       reductionDB, minAllowedReduction,
-      "Echo reduction \(String(format: "%.1f", reductionDB)) dB regressed from baseline \(String(format: "%.1f", aecBaseline.reduction_db)) dB (min allowed: \(String(format: "%.1f", minAllowedReduction)) dB)")
+      "Echo reduction \(String(format: "%.1f", reductionDB)) dB regressed from baseline \(String(format: "%.1f", aecBaseline.reduction_db)) dB (min allowed: \(String(format: "%.1f", minAllowedReduction)) dB)"
+    )
   }
 
   /// Test that reprocessing the same input produces consistent output
@@ -681,10 +708,14 @@ final class RegressionTests512: XCTestCase {
     let coremlFile = samplesDir.appendingPathComponent("farend_singletalk_processed_coreml_512.wav")
 
     guard FileManager.default.fileExists(atPath: micFile.path) else {
-      throw XCTSkip("Mic input file not found at: \(micFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+      throw XCTSkip(
+        "Mic input file not found at: \(micFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+      )
     }
     guard FileManager.default.fileExists(atPath: coremlFile.path) else {
-      throw XCTSkip("CoreML 512-unit output file not found at: \(coremlFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+      throw XCTSkip(
+        "CoreML 512-unit output file not found at: \(coremlFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+      )
     }
 
     let micSamples = try RegressionTestUtils.readWAVFile(micFile)
@@ -699,8 +730,12 @@ final class RegressionTests512: XCTestCase {
     print("  Mic samples: \(micSamples.count)")
     print("  Output samples: \(coremlSamples.count)")
     print("  Mic RMS: \(String(format: "%.6f", micRMS))")
-    print("  Output RMS: \(String(format: "%.6f", coremlRMS)) (baseline: \(String(format: "%.6f", aecBaseline.output_rms)))")
-    print("  Reduction: \(String(format: "%.1f", reductionDB)) dB (baseline: \(String(format: "%.1f", aecBaseline.reduction_db)) dB)")
+    print(
+      "  Output RMS: \(String(format: "%.6f", coremlRMS)) (baseline: \(String(format: "%.6f", aecBaseline.output_rms)))"
+    )
+    print(
+      "  Reduction: \(String(format: "%.1f", reductionDB)) dB (baseline: \(String(format: "%.1f", aecBaseline.reduction_db)) dB)"
+    )
 
     // Detailed analysis
     let outputAnalysis = RegressionTestUtils.analyzeAudio(coremlSamples)
@@ -722,7 +757,8 @@ final class RegressionTests512: XCTestCase {
     let minAllowedReduction = aecBaseline.reduction_db - tolerance.db
     XCTAssertGreaterThanOrEqual(
       reductionDB, minAllowedReduction,
-      "Echo reduction \(String(format: "%.1f", reductionDB)) dB regressed from baseline \(String(format: "%.1f", aecBaseline.reduction_db)) dB (min allowed: \(String(format: "%.1f", minAllowedReduction)) dB)")
+      "Echo reduction \(String(format: "%.1f", reductionDB)) dB regressed from baseline \(String(format: "%.1f", aecBaseline.reduction_db)) dB (min allowed: \(String(format: "%.1f", minAllowedReduction)) dB)"
+    )
   }
 
   /// Test that reprocessing the same input produces consistent output
@@ -774,7 +810,9 @@ final class RegressionTests256: XCTestCase {
     let coremlFile = samplesDir.appendingPathComponent("farend_singletalk_processed_coreml_256.wav")
 
     guard FileManager.default.fileExists(atPath: micFile.path) else {
-      throw XCTSkip("Mic input file not found at: \(micFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+      throw XCTSkip(
+        "Mic input file not found at: \(micFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+      )
     }
 
     let micSamples = try RegressionTestUtils.readWAVFile(micFile)
@@ -787,7 +825,9 @@ final class RegressionTests256: XCTestCase {
       print("\n[256-unit] Processing AEC challenge sample in-place (streaming)...")
       let loopbackFile = samplesDir.appendingPathComponent("farend_singletalk_lpb.wav")
       guard FileManager.default.fileExists(atPath: loopbackFile.path) else {
-        throw XCTSkip("Loopback file not found at: \(loopbackFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files.")
+        throw XCTSkip(
+          "Loopback file not found at: \(loopbackFile.path). Run swift test --filter RegenerateSamplesTests to generate sample files."
+        )
       }
       let loopbackSamples = try RegressionTestUtils.readWAVFile(loopbackFile)
 
@@ -842,7 +882,8 @@ final class RegressionTests256: XCTestCase {
     // 256-unit model should achieve significant echo reduction (>30 dB on this sample)
     XCTAssertGreaterThan(
       reductionDB, 30.0,
-      "Echo reduction \(String(format: "%.1f", reductionDB)) dB should be > 30 dB for far-end singletalk")
+      "Echo reduction \(String(format: "%.1f", reductionDB)) dB should be > 30 dB for far-end singletalk"
+    )
   }
 
   /// Test that reprocessing the same input produces consistent output

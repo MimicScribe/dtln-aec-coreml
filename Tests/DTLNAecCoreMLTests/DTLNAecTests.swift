@@ -128,7 +128,8 @@ final class DTLNAecTests: XCTestCase {
 
     // Should have produced approximately the expected number of output samples
     // (1 second = 16000 samples, minus initial buffering latency of ~128 samples)
-    XCTAssertGreaterThan(outputSamples.count, numSamples - 256,
+    XCTAssertGreaterThan(
+      outputSamples.count, numSamples - 256,
       "Expected approximately \(numSamples) output samples")
 
     // Verify no NaN or Inf values in output
@@ -216,7 +217,8 @@ final class DTLNAecTests: XCTestCase {
     }
 
     // Should produce approximately the expected number of samples (minus initial latency)
-    XCTAssertGreaterThan(output.count, numSamples - 256,
+    XCTAssertGreaterThan(
+      output.count, numSamples - 256,
       "Long input should produce at least \(numSamples - 256) output samples")
 
     // Verify no NaN or Inf values in output
@@ -374,7 +376,9 @@ final class DTLNAecTests: XCTestCase {
         break
       }
     }
-    XCTAssertTrue(differenceFromFresh, "LSTM states should be preserved after flush, causing different output than fresh processor")
+    XCTAssertTrue(
+      differenceFromFresh,
+      "LSTM states should be preserved after flush, causing different output than fresh processor")
 
     // 2. Compute correlation between outputs before and after flush
     // With same input and preserved states, correlation should be high
@@ -382,13 +386,21 @@ final class DTLNAecTests: XCTestCase {
       let n = min(a.count, b.count)
       guard n > 0 else { return 0 }
 
-      var sumA: Float = 0, sumB: Float = 0
-      for i in 0..<n { sumA += a[i]; sumB += b[i] }
-      let meanA = sumA / Float(n), meanB = sumB / Float(n)
-
-      var cov: Float = 0, varA: Float = 0, varB: Float = 0
+      var sumA: Float = 0
+      var sumB: Float = 0
       for i in 0..<n {
-        let da = a[i] - meanA, db = b[i] - meanB
+        sumA += a[i]
+        sumB += b[i]
+      }
+      let meanA = sumA / Float(n)
+      let meanB = sumB / Float(n)
+
+      var cov: Float = 0
+      var varA: Float = 0
+      var varB: Float = 0
+      for i in 0..<n {
+        let da = a[i] - meanA
+        let db = b[i] - meanB
         cov += da * db
         varA += da * da
         varB += db * db
@@ -401,7 +413,8 @@ final class DTLNAecTests: XCTestCase {
     let correlationAfterFlush = computeCorrelation(outputBeforeFlush, outputAfterFlush)
     // State preserved means output may differ from fresh but correlation validates continuity
     // Note: correlation can vary based on LSTM state evolution; just verify it's not random
-    XCTAssertGreaterThan(correlationAfterFlush, -0.5,
+    XCTAssertGreaterThan(
+      correlationAfterFlush, -0.5,
       "Output after flush should show some correlation pattern (not anti-correlated)")
     print("Correlation after flush: \(correlationAfterFlush)")
   }
@@ -669,14 +682,17 @@ final class DTLNAecTests: XCTestCase {
     let exactInput = [Float](repeating: 0.3, count: blockShift)
     processor.feedFarEnd(exactInput)
     let exactOutput = processor.processNearEnd(exactInput)
-    XCTAssertEqual(exactOutput.count, blockShift, "Exact blockShift input should produce blockShift output")
+    XCTAssertEqual(
+      exactOutput.count, blockShift, "Exact blockShift input should produce blockShift output")
 
     // Test double block shift (256 samples)
     processor.resetStates()
     let doubleInput = [Float](repeating: 0.3, count: blockShift * 2)
     processor.feedFarEnd(doubleInput)
     let doubleOutput = processor.processNearEnd(doubleInput)
-    XCTAssertEqual(doubleOutput.count, blockShift * 2, "Double blockShift input should produce double blockShift output")
+    XCTAssertEqual(
+      doubleOutput.count, blockShift * 2,
+      "Double blockShift input should produce double blockShift output")
 
     // Test off-by-one below block shift (127 samples)
     processor.resetStates()
@@ -690,7 +706,9 @@ final class DTLNAecTests: XCTestCase {
     let aboveInput = [Float](repeating: 0.3, count: blockShift + 1)
     processor.feedFarEnd(aboveInput)
     let aboveOutput = processor.processNearEnd(aboveInput)
-    XCTAssertEqual(aboveOutput.count, blockShift, "Above blockShift input should produce exactly blockShift output")
+    XCTAssertEqual(
+      aboveOutput.count, blockShift,
+      "Above blockShift input should produce exactly blockShift output")
   }
 
   func testOutputClippingConfig() throws {
@@ -721,7 +739,8 @@ final class DTLNAecTests: XCTestCase {
     let outputNoClip = processorNoClip.processNearEnd(input)
 
     // Should still produce valid output (just not guaranteed clipped)
-    XCTAssertGreaterThan(outputNoClip.count, 0, "With clipOutput=false, should still produce output")
+    XCTAssertGreaterThan(
+      outputNoClip.count, 0, "With clipOutput=false, should still produce output")
   }
 
   func testValidateNumericsConfig() throws {

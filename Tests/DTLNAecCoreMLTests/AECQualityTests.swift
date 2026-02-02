@@ -115,27 +115,34 @@ final class AECQualityTests: XCTestCase {
     // Echo-only region: 0.3s-0.8s (before speech)
     let echoOnlyStart = Int(0.3 * Self.sampleRate)
     let echoOnlyEnd = Int(0.8 * Self.sampleRate)
-    let echoOnlyEnergy = computeEnergy(Array(output[min(echoOnlyStart, output.count)..<min(echoOnlyEnd, output.count)]))
+    let echoOnlyEnergy = computeEnergy(
+      Array(output[min(echoOnlyStart, output.count)..<min(echoOnlyEnd, output.count)]))
 
     // Speech+echo region: 1.2s-1.8s (during speech)
     let speechStart = Int(1.2 * Self.sampleRate)
     let speechEnd = Int(1.8 * Self.sampleRate)
-    let speechRegionEnergy = computeEnergy(Array(output[min(speechStart, output.count)..<min(speechEnd, output.count)]))
+    let speechRegionEnergy = computeEnergy(
+      Array(output[min(speechStart, output.count)..<min(speechEnd, output.count)]))
 
     // Echo-only region after speech: 2.2s-2.7s
     let echoOnly2Start = Int(2.2 * Self.sampleRate)
     let echoOnly2End = min(Int(2.7 * Self.sampleRate), output.count)
-    let echoOnly2Energy = computeEnergy(Array(output[min(echoOnly2Start, output.count)..<echoOnly2End]))
+    let echoOnly2Energy = computeEnergy(
+      Array(output[min(echoOnly2Start, output.count)..<echoOnly2End]))
 
     print("  Echo-only region (before speech) energy: \(String(format: "%.6f", echoOnlyEnergy))")
     print("  Speech+echo region energy: \(String(format: "%.6f", speechRegionEnergy))")
     print("  Echo-only region (after speech) energy: \(String(format: "%.6f", echoOnly2Energy))")
 
     let avgEchoOnlyEnergy = (echoOnlyEnergy + echoOnly2Energy) / 2
-    print("  Speech/echo energy ratio: \(String(format: "%.2f", speechRegionEnergy / max(avgEchoOnlyEnergy, 1e-10)))")
+    print(
+      "  Speech/echo energy ratio: \(String(format: "%.2f", speechRegionEnergy / max(avgEchoOnlyEnergy, 1e-10)))"
+    )
 
     // Speech region should have more energy than echo-only regions
-    XCTAssertGreaterThan(speechRegionEnergy, avgEchoOnlyEnergy, "Speech region should have more energy than echo-only regions")
+    XCTAssertGreaterThan(
+      speechRegionEnergy, avgEchoOnlyEnergy,
+      "Speech region should have more energy than echo-only regions")
   }
 
   /// Test with varying echo delays
@@ -231,7 +238,8 @@ final class AECQualityTests: XCTestCase {
 
     // Verify output quality
     // 1. Should produce reasonable output count
-    XCTAssertGreaterThan(output.count, numSamples - 256,
+    XCTAssertGreaterThan(
+      output.count, numSamples - 256,
       "Output should have approximately the same number of samples as input")
 
     // 2. Output should not contain NaN or Inf
@@ -243,7 +251,8 @@ final class AECQualityTests: XCTestCase {
     // Real audio tests (see testCompareWithPythonReference) show excellent suppression
     // matching Python TFLite reference (49-53 dB).
     // Using 1dB as minimum for synthetic broadband signals (original threshold).
-    XCTAssertGreaterThan(reductionDb, 1, "Expected >1dB reduction for broadband echo (steady-state)")
+    XCTAssertGreaterThan(
+      reductionDb, 1, "Expected >1dB reduction for broadband echo (steady-state)")
   }
 
   /// Double-talk scenario: simultaneous far-end and near-end
@@ -294,7 +303,8 @@ final class AECQualityTests: XCTestCase {
     print("  Energy ratio: \(String(format: "%.2f", outputEnergy / speechEnergy))")
 
     // Output should retain meaningful energy (speech not suppressed)
-    XCTAssertGreaterThan(outputEnergy, speechEnergy * 0.1, "Near-end speech should be partially preserved")
+    XCTAssertGreaterThan(
+      outputEnergy, speechEnergy * 0.1, "Near-end speech should be partially preserved")
   }
 
   // MARK: - Helper Functions

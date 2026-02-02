@@ -665,8 +665,12 @@ public final class DTLNAecEchoProcessor {
       fftRealBuffer.withUnsafeMutableBufferPointer { realPtr in
         fftImagBuffer.withUnsafeMutableBufferPointer { imagPtr in
           // Copy even indices to real, odd indices to imag (stride 2)
-          vDSP_vsadd(srcPtr.baseAddress!, 2, [Float](repeating: 0, count: 1), realPtr.baseAddress!, 1, vDSP_Length(halfLen))
-          vDSP_vsadd(srcPtr.baseAddress! + 1, 2, [Float](repeating: 0, count: 1), imagPtr.baseAddress!, 1, vDSP_Length(halfLen))
+          vDSP_vsadd(
+            srcPtr.baseAddress!, 2, [Float](repeating: 0, count: 1), realPtr.baseAddress!, 1,
+            vDSP_Length(halfLen))
+          vDSP_vsadd(
+            srcPtr.baseAddress! + 1, 2, [Float](repeating: 0, count: 1), imagPtr.baseAddress!, 1,
+            vDSP_Length(halfLen))
         }
       }
     }
@@ -691,7 +695,8 @@ public final class DTLNAecEchoProcessor {
 
         // Bins 1 to fftBins-2 (indices 1..255) - use vDSP for magnitude
         // Create a view of bins 1..255 as a split complex
-        var midSplit = DSPSplitComplex(realp: realPtr.baseAddress! + 1, imagp: imagPtr.baseAddress! + 1)
+        var midSplit = DSPSplitComplex(
+          realp: realPtr.baseAddress! + 1, imagp: imagPtr.baseAddress! + 1)
         magnitude.withUnsafeMutableBufferPointer { magPtr in
           // Calculate squared magnitudes: real^2 + imag^2
           vDSP_zvmags(&midSplit, 1, magPtr.baseAddress! + 1, 1, vDSP_Length(Self.fftBins - 2))
@@ -724,7 +729,9 @@ public final class DTLNAecEchoProcessor {
     return (magnitude, phase)
   }
 
-  private func applyMaskAndIFFT(micSamples: [Float], micPhase: [Float], mask: MLMultiArray)
+  private func applyMaskAndIFFT(
+    micSamples: [Float], micPhase: [Float], mask: MLMultiArray
+  )
     -> [Float]
   {
     guard let fftSetup else { return micSamples }
@@ -735,8 +742,12 @@ public final class DTLNAecEchoProcessor {
       fftRealBuffer.withUnsafeMutableBufferPointer { realPtr in
         fftImagBuffer.withUnsafeMutableBufferPointer { imagPtr in
           // Copy even indices to real, odd indices to imag (stride 2)
-          vDSP_vsadd(srcPtr.baseAddress!, 2, [Float](repeating: 0, count: 1), realPtr.baseAddress!, 1, vDSP_Length(halfLen))
-          vDSP_vsadd(srcPtr.baseAddress! + 1, 2, [Float](repeating: 0, count: 1), imagPtr.baseAddress!, 1, vDSP_Length(halfLen))
+          vDSP_vsadd(
+            srcPtr.baseAddress!, 2, [Float](repeating: 0, count: 1), realPtr.baseAddress!, 1,
+            vDSP_Length(halfLen))
+          vDSP_vsadd(
+            srcPtr.baseAddress! + 1, 2, [Float](repeating: 0, count: 1), imagPtr.baseAddress!, 1,
+            vDSP_Length(halfLen))
         }
       }
     }
@@ -780,8 +791,12 @@ public final class DTLNAecEchoProcessor {
 
         // Unpack using stride-based copy: output[2*i] = realp[i], output[2*i+1] = imagp[i]
         output.withUnsafeMutableBufferPointer { outPtr in
-          vDSP_vsadd(realPtr.baseAddress!, 1, [Float](repeating: 0, count: 1), outPtr.baseAddress!, 2, vDSP_Length(halfLen))
-          vDSP_vsadd(imagPtr.baseAddress!, 1, [Float](repeating: 0, count: 1), outPtr.baseAddress! + 1, 2, vDSP_Length(halfLen))
+          vDSP_vsadd(
+            realPtr.baseAddress!, 1, [Float](repeating: 0, count: 1), outPtr.baseAddress!, 2,
+            vDSP_Length(halfLen))
+          vDSP_vsadd(
+            imagPtr.baseAddress!, 1, [Float](repeating: 0, count: 1), outPtr.baseAddress! + 1, 2,
+            vDSP_Length(halfLen))
         }
       }
     }

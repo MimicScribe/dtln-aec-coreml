@@ -29,8 +29,9 @@ __pycache__/
 .vscode/
 .idea/
 
-# Claude Code
-.claude/
+# Claude Code (allow settings.json for project-specific hooks)
+.claude/*
+!.claude/settings.json
 
 # Temporary files
 *.tmp

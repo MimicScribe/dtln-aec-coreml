@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "swift-format format -i $CLAUDE_FILE_PATHS"
+          }
+        ]
+      }
+    ]
+  }
+}
