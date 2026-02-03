@@ -131,6 +131,7 @@ public struct DTLNAecConfig: Sendable {
     var enablePerformanceTracking: Bool
     var validateNumerics: Bool
     var clipOutput: Bool
+    var enableLinkedGainControl: Bool
 }
 ```
 
@@ -143,6 +144,7 @@ public struct DTLNAecConfig: Sendable {
 | `enablePerformanceTracking` | `Bool` | `true` | Track `averageFrameTimeMs` |
 | `validateNumerics` | `Bool` | `true` | Check for NaN/Inf in model output |
 | `clipOutput` | `Bool` | `true` | Clamp output to [-1, 1] range |
+| `enableLinkedGainControl` | `Bool` | `true` | Apply linked gain control to both streams (see [Linked Gain Control](LinkedGainControl.md)) |
 
 ### Compute Units
 
@@ -195,6 +197,63 @@ public enum DTLNAecError: Error, LocalizedError {
 | `modelNotFound(name)` | Model file not found in bundle |
 | `initializationFailed(reason)` | Failed to initialize processor |
 | `inferenceFailed(reason)` | Model inference failed |
+
+---
+
+## LinkedGainController
+
+Applies identical gain to both mic and system audio to preserve the echo relationship. Used internally by `DTLNAecEchoProcessor` when `enableLinkedGainControl` is true.
+
+See [Linked Gain Control](LinkedGainControl.md) for detailed documentation.
+
+```swift
+public final class LinkedGainController {
+    // Soft-knee parameters
+    let threshold: Float      // Default: 0.5
+    let kneeWidth: Float      // Default: 0.3
+    let ratio: Float          // Default: 8.0
+
+    // Gain limits
+    let minGain: Float        // Default: 0.1
+    let maxGain: Float        // Default: 2.0
+
+    init(
+        threshold: Float = 0.5,
+        kneeWidth: Float = 0.3,
+        ratio: Float = 8.0,
+        minGain: Float = 0.1,
+        maxGain: Float = 2.0,
+        attackMs: Float = 1.0,
+        releaseMs: Float = 100.0,
+        frameMs: Float = 8.0
+    )
+
+    func computeLinkedGain(micPeak: Float, sysPeak: Float) -> Float
+    func reset()
+    func captureState() -> (fastEnvelope: Float, slowEnvelope: Float, currentGain: Float)
+    func restoreState(_ state: (fastEnvelope: Float, slowEnvelope: Float, currentGain: Float))
+}
+```
+
+### Methods
+
+#### computeLinkedGain(micPeak:sysPeak:)
+
+Computes the gain to apply to both streams based on the maximum peak of both inputs.
+
+**Parameters:**
+- `micPeak`: Peak absolute value of mic audio frame
+- `sysPeak`: Peak absolute value of system/loopback audio frame
+
+**Returns:** Gain value to apply to both streams (clamped to [minGain, maxGain])
+
+#### reset()
+
+Resets envelope and gain state. Called automatically by `DTLNAecEchoProcessor.resetStates()`.
+
+#### captureState() / restoreState(_:)
+
+Captures and restores internal state. Used internally by `flush()` to preserve state across zero-padded frame processing.
 
 ---
 

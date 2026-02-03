@@ -58,19 +58,28 @@ public struct DTLNAecConfig: Sendable {
   /// Whether to clip output samples to [-1, 1] range (default: true)
   public var clipOutput: Bool
 
+  /// Whether to apply linked gain control to normalize input levels (default: true)
+  ///
+  /// When enabled, applies the same gain to both mic and system audio to preserve
+  /// the echo-to-reference ratio needed for stable DTLN convergence. Uses soft-knee
+  /// compression to handle loud transients without clipping.
+  public var enableLinkedGainControl: Bool
+
   /// Creates a configuration with default settings.
   public init(
     modelSize: DTLNAecModelSize = .small,
     computeUnits: MLComputeUnits = .cpuAndNeuralEngine,
     enablePerformanceTracking: Bool = true,
     validateNumerics: Bool = true,
-    clipOutput: Bool = true
+    clipOutput: Bool = true,
+    enableLinkedGainControl: Bool = true
   ) {
     self.modelSize = modelSize
     self.computeUnits = computeUnits
     self.enablePerformanceTracking = enablePerformanceTracking
     self.validateNumerics = validateNumerics
     self.clipOutput = clipOutput
+    self.enableLinkedGainControl = enableLinkedGainControl
   }
 }
 
@@ -163,6 +172,10 @@ public final class DTLNAecEchoProcessor {
   private var micBuffer: [Float]
   private var loopbackBuffer: [Float]
   private var outputBuffer: [Float]
+  private var effectiveMicBuffer: [Float]
+  private var effectiveLoopbackBuffer: [Float]
+  private var micBufferPeak: Float = 0
+  private var loopbackBufferPeak: Float = 0
 
   // MARK: - FFT Setup (Accelerate vDSP)
 
@@ -184,6 +197,10 @@ public final class DTLNAecEchoProcessor {
   private var framesProcessed: Int = 0
   private var totalProcessingTimeMs: Double = 0
 
+  // MARK: - Linked Gain Control
+
+  private var gainController: LinkedGainController?
+
   // MARK: - Thread Safety
 
   /// Lock protecting feedFarEnd, processNearEnd, and flush for concurrent access
@@ -204,6 +221,8 @@ public final class DTLNAecEchoProcessor {
     micBuffer = [Float](repeating: 0, count: Self.blockLen)
     loopbackBuffer = [Float](repeating: 0, count: Self.blockLen)
     outputBuffer = [Float](repeating: 0, count: Self.blockLen)
+    effectiveMicBuffer = [Float](repeating: 0, count: Self.blockLen)
+    effectiveLoopbackBuffer = [Float](repeating: 0, count: Self.blockLen)
     window = [Float](repeating: 0, count: Self.blockLen)
     vDSP_hann_window(&window, vDSP_Length(Self.blockLen), Int32(vDSP_HANN_NORM))
     // For packed real FFT, buffers are half the block size
@@ -216,6 +235,10 @@ public final class DTLNAecEchoProcessor {
     pendingLoopbackRing = RingBuffer(capacity: Self.ringBufferCapacity)
     // log2n for FFT setup (computed from blockLen)
     fftSetup = vDSP_create_fftsetup(Self.fftLog2n, FFTRadix(kFFTRadix2))
+    // Initialize linked gain control if enabled
+    if config.enableLinkedGainControl {
+      gainController = LinkedGainController()
+    }
   }
 
   deinit {
@@ -356,6 +379,9 @@ public final class DTLNAecEchoProcessor {
     pendingLoopbackSamples.removeAll(keepingCapacity: true)
     framesProcessed = 0
     totalProcessingTimeMs = 0
+    micBufferPeak = 0
+    loopbackBufferPeak = 0
+    gainController?.reset()
   }
 
   // MARK: - Pending Sample Ring Buffers (O(1) append/remove)
@@ -460,10 +486,13 @@ public final class DTLNAecEchoProcessor {
 
       // Python-style sliding window: shift left and add new samples at end
       // micBuffer and loopbackBuffer are always exactly blockLen (512) samples
-      shiftAndAppend(
+      // Track peaks during shift for efficient gain control (avoids full buffer scan)
+      let newMicPeak = shiftAndAppend(
         buffer: &micBuffer, newSamples: Array(pendingMicSamples.prefix(Self.blockShift)))
-      shiftAndAppend(
+      let newLpbPeak = shiftAndAppend(
         buffer: &loopbackBuffer, newSamples: Array(pendingLoopbackSamples.prefix(Self.blockShift)))
+      micBufferPeak = max(micBufferPeak * 0.75, newMicPeak)  // Decaying peak tracker
+      loopbackBufferPeak = max(loopbackBufferPeak * 0.75, newLpbPeak)
 
       pendingMicSamples.removeFirst(Self.blockShift)
       pendingLoopbackSamples.removeFirst(Self.blockShift)
@@ -520,6 +549,10 @@ public final class DTLNAecEchoProcessor {
 
     var outputSamples: [Float] = []
 
+    // Save gain controller state before processing zero-padded frames
+    // to preserve session continuity (matching LSTM state preservation)
+    let savedGainState = gainController?.captureState()
+
     // Process any pending samples by zero-padding to blockShift boundary
     if !pendingMicSamples.isEmpty || !pendingLoopbackSamples.isEmpty {
       // Pad mic samples to blockShift
@@ -535,10 +568,12 @@ public final class DTLNAecEchoProcessor {
       }
 
       // Process the padded frame through normal path
-      shiftAndAppend(
+      let newMicPeak = shiftAndAppend(
         buffer: &micBuffer, newSamples: Array(pendingMicSamples.prefix(Self.blockShift)))
-      shiftAndAppend(
+      let newLpbPeak = shiftAndAppend(
         buffer: &loopbackBuffer, newSamples: Array(pendingLoopbackSamples.prefix(Self.blockShift)))
+      micBufferPeak = max(micBufferPeak * 0.75, newMicPeak)
+      loopbackBufferPeak = max(loopbackBufferPeak * 0.75, newLpbPeak)
 
       pendingMicSamples.removeAll(keepingCapacity: true)
       pendingLoopbackSamples.removeAll(keepingCapacity: true)
@@ -550,6 +585,11 @@ public final class DTLNAecEchoProcessor {
         let frameOutput = overlapAdd(micBuffer)
         outputSamples.append(contentsOf: frameOutput)
       }
+    }
+
+    // Restore gain controller state to preserve session continuity
+    if let state = savedGainState {
+      gainController?.restoreState(state)
     }
 
     // Extract the overlap-add tail (first 384 samples that haven't been output yet)
@@ -565,7 +605,9 @@ public final class DTLNAecEchoProcessor {
   }
 
   /// Python-style buffer shift: shift left by blockShift and add new samples at end
-  private func shiftAndAppend(buffer: inout [Float], newSamples: [Float]) {
+  /// - Returns: Peak absolute value of the new samples being appended
+  @discardableResult
+  private func shiftAndAppend(buffer: inout [Float], newSamples: [Float]) -> Float {
     let overlapCount = Self.blockLen - Self.blockShift  // 384
     // Use memmove for overlapping memory regions (source and dest overlap)
     _ = buffer.withUnsafeMutableBytes { ptr in
@@ -591,6 +633,13 @@ public final class DTLNAecEchoProcessor {
           .update(repeating: 0, count: Self.blockShift - copyCount)
       }
     }
+
+    // Compute peak of new samples (128 samples vs full 512 buffer scan)
+    var peak: Float = 0
+    if !newSamples.isEmpty {
+      vDSP_maxmgv(newSamples, 1, &peak, vDSP_Length(newSamples.count))
+    }
+    return peak
   }
 
   /// Get average frame processing time in milliseconds
@@ -608,9 +657,27 @@ public final class DTLNAecEchoProcessor {
       let estimatedFrameArray, let lpbTimeArray
     else { return nil }
 
+    // Apply linked gain control if enabled
+    var effectiveMic: [Float]
+    var effectiveLoopback: [Float]
+
+    if let gc = gainController {
+      // Use tracked peaks from shiftAndAppend (avoids full 512-sample buffer scan)
+      let linkedGain = gc.computeLinkedGain(micPeak: micBufferPeak, sysPeak: loopbackBufferPeak)
+
+      // Apply same gain to both streams using pre-allocated buffers (zero allocation)
+      vDSP.multiply(linkedGain, mic, result: &effectiveMicBuffer)
+      vDSP.multiply(linkedGain, loopback, result: &effectiveLoopbackBuffer)
+      effectiveMic = effectiveMicBuffer
+      effectiveLoopback = effectiveLoopbackBuffer
+    } else {
+      effectiveMic = mic
+      effectiveLoopback = loopback
+    }
+
     // Part 1: Frequency Domain
-    let (micMag, micPhase) = computeMagnitudeAndPhase(mic)
-    let (lpbMag, _) = computeMagnitudeAndPhase(loopback)
+    let (micMag, micPhase) = computeMagnitudeAndPhase(effectiveMic)
+    let (lpbMag, _) = computeMagnitudeAndPhase(effectiveLoopback)
 
     copyToMLArray(micMag, to: micMagArray)
     copyToMLArray(lpbMag, to: lpbMagArray)
@@ -628,11 +695,11 @@ public final class DTLNAecEchoProcessor {
     else { return nil }
 
     copyStates(from: newStates1, to: states1)
-    let estimatedFrame = applyMaskAndIFFT(micSamples: mic, micPhase: micPhase, mask: mask)
+    let estimatedFrame = applyMaskAndIFFT(micSamples: effectiveMic, micPhase: micPhase, mask: mask)
 
     // Part 2: Time Domain
     copyToMLArray(estimatedFrame, to: estimatedFrameArray)
-    copyToMLArray(loopback, to: lpbTimeArray)
+    copyToMLArray(effectiveLoopback, to: lpbTimeArray)
 
     let part2Input: [String: Any] = [
       "estimated_frame": estimatedFrameArray,
@@ -651,8 +718,8 @@ public final class DTLNAecEchoProcessor {
 
     // Validate numerics if enabled
     if config.validateNumerics && containsInvalidNumerics(result) {
-      // Fall back to passthrough (mic input) on NaN/Inf
-      return mic
+      // Fall back to passthrough (gain-adjusted mic input) on NaN/Inf
+      return effectiveMic
     }
 
     // Clip output if enabled

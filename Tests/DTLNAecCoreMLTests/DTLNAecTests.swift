@@ -916,4 +916,207 @@ final class DTLNAecTests: XCTestCase {
     wait(for: [expectation], timeout: 10.0)
     // Test passes if no crashes or deadlocks occurred
   }
+
+  // MARK: - Linked Gain Control Tests
+
+  func testLinkedGainControllerDefaults() {
+    let gc = LinkedGainController()
+    XCTAssertEqual(gc.threshold, 0.5, accuracy: 0.001)
+    XCTAssertEqual(gc.kneeWidth, 0.3, accuracy: 0.001)
+    XCTAssertEqual(gc.ratio, 8.0, accuracy: 0.001)
+    XCTAssertEqual(gc.minGain, 0.1, accuracy: 0.001)
+    XCTAssertEqual(gc.maxGain, 2.0, accuracy: 0.001)
+  }
+
+  func testLinkedGainUnityBelowThreshold() {
+    let gc = LinkedGainController()
+    // Quiet audio should return gain close to 1.0
+    let gain = gc.computeLinkedGain(micPeak: 0.2, sysPeak: 0.1)
+    XCTAssertEqual(gain, 1.0, accuracy: 0.05, "Quiet audio should have near-unity gain")
+  }
+
+  func testLinkedGainCompressesLoudAudio() {
+    let gc = LinkedGainController()
+    // Process several frames to let the envelope settle
+    for _ in 0..<10 {
+      _ = gc.computeLinkedGain(micPeak: 0.9, sysPeak: 0.8)
+    }
+    let gain = gc.computeLinkedGain(micPeak: 0.9, sysPeak: 0.8)
+    XCTAssertLessThan(gain, 1.0, "Loud audio should be compressed (gain < 1.0)")
+    XCTAssertGreaterThan(gain, 0.1, "Gain should not fall below minGain")
+  }
+
+  func testLinkedGainSoftKneeSmooth() {
+    let gc = LinkedGainController()
+    var gains: [Float] = []
+
+    // Sweep through levels from quiet to loud
+    for i in 0..<20 {
+      let level = Float(i) / 20.0  // 0.0 to 0.95
+      let gain = gc.computeLinkedGain(micPeak: level, sysPeak: level * 0.9)
+      gains.append(gain)
+    }
+
+    // Check for smooth transition (no large jumps)
+    for i in 1..<gains.count {
+      let delta = abs(gains[i] - gains[i - 1])
+      XCTAssertLessThan(
+        delta, 0.3, "Gain should change smoothly, but jumped from \(gains[i-1]) to \(gains[i])")
+    }
+  }
+
+  func testLinkedGainAppliedToBothStreams() {
+    // Verify that same gain would be computed regardless of which stream is louder
+    let gc1 = LinkedGainController()
+    let gc2 = LinkedGainController()
+
+    // Same combined peak, different distribution
+    let gain1 = gc1.computeLinkedGain(micPeak: 0.8, sysPeak: 0.6)
+    let gain2 = gc2.computeLinkedGain(micPeak: 0.6, sysPeak: 0.8)
+
+    // Both should produce same gain since they use max(micPeak, sysPeak)
+    XCTAssertEqual(gain1, gain2, accuracy: 0.001, "Linked gain should be the same regardless of which stream is louder")
+  }
+
+  func testLinkedGainDisabledViaConfig() {
+    let config = DTLNAecConfig(enableLinkedGainControl: false)
+    XCTAssertFalse(config.enableLinkedGainControl)
+
+    // Create processor with gain control disabled
+    let processor = DTLNAecEchoProcessor(config: config)
+    XCTAssertFalse(processor.config.enableLinkedGainControl)
+  }
+
+  func testLinkedGainEnabledByDefault() {
+    let config = DTLNAecConfig()
+    XCTAssertTrue(config.enableLinkedGainControl, "Linked gain control should be enabled by default")
+  }
+
+  func testLinkedGainControllerReset() {
+    let gc = LinkedGainController()
+
+    // Build up some state with loud audio
+    for _ in 0..<20 {
+      _ = gc.computeLinkedGain(micPeak: 0.9, sysPeak: 0.9)
+    }
+
+    // Gain should be compressed
+    let gainBeforeReset = gc.computeLinkedGain(micPeak: 0.9, sysPeak: 0.9)
+    XCTAssertLessThan(gainBeforeReset, 1.0)
+
+    // Reset the controller
+    gc.reset()
+
+    // After reset, first frame with quiet audio should be near unity
+    let gainAfterReset = gc.computeLinkedGain(micPeak: 0.2, sysPeak: 0.2)
+    XCTAssertEqual(gainAfterReset, 1.0, accuracy: 0.05, "After reset, quiet audio should have near-unity gain")
+  }
+
+  func testLinkedGainCustomParameters() {
+    let gc = LinkedGainController(
+      threshold: 0.3,
+      kneeWidth: 0.2,
+      ratio: 4.0,
+      minGain: 0.2,
+      maxGain: 1.5
+    )
+
+    XCTAssertEqual(gc.threshold, 0.3, accuracy: 0.001)
+    XCTAssertEqual(gc.kneeWidth, 0.2, accuracy: 0.001)
+    XCTAssertEqual(gc.ratio, 4.0, accuracy: 0.001)
+    XCTAssertEqual(gc.minGain, 0.2, accuracy: 0.001)
+    XCTAssertEqual(gc.maxGain, 1.5, accuracy: 0.001)
+  }
+
+  func testLinkedGainCaptureAndRestoreState() {
+    let gc = LinkedGainController()
+
+    // Build up some state by processing loud audio
+    for _ in 0..<10 {
+      _ = gc.computeLinkedGain(micPeak: 0.9, sysPeak: 0.85)
+    }
+
+    // Capture state after processing loud audio
+    let captured = gc.captureState()
+
+    // Process quiet audio which would normally change the state
+    for _ in 0..<5 {
+      _ = gc.computeLinkedGain(micPeak: 0.1, sysPeak: 0.05)
+    }
+
+    // Verify state has changed
+    let afterQuiet = gc.captureState()
+    XCTAssertNotEqual(captured.fastEnvelope, afterQuiet.fastEnvelope, accuracy: 0.001)
+
+    // Restore original state
+    gc.restoreState(captured)
+
+    // Verify state matches captured values
+    let restored = gc.captureState()
+    XCTAssertEqual(captured.fastEnvelope, restored.fastEnvelope, accuracy: 0.0001)
+    XCTAssertEqual(captured.slowEnvelope, restored.slowEnvelope, accuracy: 0.0001)
+    XCTAssertEqual(captured.currentGain, restored.currentGain, accuracy: 0.0001)
+  }
+
+  func testFlushPreservesGainControllerState() throws {
+    // This test verifies that flush() preserves gain controller state by
+    // comparing output energy across multiple frames before and after flush.
+    // We use realistic varying audio to get meaningful neural network output.
+
+    // Create processor with gain control enabled
+    let config = DTLNAecConfig(enableLinkedGainControl: true)
+    let processor = DTLNAecEchoProcessor(config: config)
+    try processor.loadModelsFromPackage()
+
+    // Generate varying loud audio (sine wave) to establish gain compression
+    let sampleCount = 256
+    var loudMic = [Float](repeating: 0, count: sampleCount)
+    var loudLoopback = [Float](repeating: 0, count: sampleCount)
+    for i in 0..<sampleCount {
+      let t = Float(i) / 16000.0
+      loudMic[i] = 0.8 * sin(2.0 * .pi * 440.0 * t)  // 440 Hz at 0.8 amplitude
+      loudLoopback[i] = 0.75 * sin(2.0 * .pi * 440.0 * t)  // Same freq, slightly lower
+    }
+
+    // Process enough frames to establish stable gain state and LSTM states
+    var preFlushEnergies: [Float] = []
+    for frameNum in 0..<20 {
+      processor.feedFarEnd(loudLoopback)
+      let output = processor.processNearEnd(loudMic)
+      // Only measure stable frames after warmup
+      if frameNum >= 15 && !output.isEmpty {
+        let energy = output.reduce(0) { $0 + $1 * $1 } / Float(output.count)
+        preFlushEnergies.append(energy)
+      }
+    }
+
+    // Add partial frame and call flush (this is where gain state could be corrupted)
+    let partialMic = Array(loudMic.prefix(64))
+    let partialLoopback = Array(loudLoopback.prefix(64))
+    processor.feedFarEnd(partialLoopback)
+    _ = processor.processNearEnd(partialMic)
+    _ = processor.flush()
+
+    // Process frames after flush and measure energy
+    var postFlushEnergies: [Float] = []
+    for frameNum in 0..<20 {
+      processor.feedFarEnd(loudLoopback)
+      let output = processor.processNearEnd(loudMic)
+      // Skip first few frames to allow LSTM states to restabilize
+      if frameNum >= 5 && !output.isEmpty {
+        let energy = output.reduce(0) { $0 + $1 * $1 } / Float(output.count)
+        postFlushEnergies.append(energy)
+      }
+    }
+
+    // Compare average energies
+    let preFlushAvg = preFlushEnergies.reduce(0, +) / max(Float(preFlushEnergies.count), 1)
+    let postFlushAvg = postFlushEnergies.reduce(0, +) / max(Float(postFlushEnergies.count), 1)
+
+    // Energy ratio should be close to 1.0 if gain state was preserved
+    // Allow wider tolerance due to LSTM state differences after flush
+    let ratio = postFlushAvg / max(preFlushAvg, 1e-10)
+    XCTAssertLessThan(ratio, 3.0, "Post-flush energy should not be much higher than pre-flush")
+    XCTAssertGreaterThan(ratio, 0.1, "Post-flush energy should not be much lower than pre-flush")
+  }
 }
