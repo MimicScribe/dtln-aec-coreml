@@ -209,6 +209,10 @@ Both parts maintain LSTM state across frames to capture temporal context.
 - **DTLN-aec:** [Nils L. Westhausen](https://github.com/breizhn/DTLN-aec) - Original TensorFlow implementation
 - **Microsoft AEC Challenge 2021:** Competition where DTLN-aec placed 3rd
 
+## Used By
+
+- [MimicScribe](https://mimicscribe.app/) — Meeting transcription app with instant talking points for macOS
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file.
