@@ -73,13 +73,14 @@ jobs:
         run: |
           echo "Checking for CoreML model packages..."
 
-          # Currently bundled: 128-unit (small) and 512-unit (large) models
-          # 256-unit (medium) model requires manual conversion - see Scripts/convert_dtln_aec_to_coreml.py
+          # All three model sizes: 128-unit (small), 256-unit (medium), 512-unit (large)
           models=(
-            "Sources/DTLNAecCoreML/Resources/DTLN_AEC_128_Part1.mlpackage"
-            "Sources/DTLNAecCoreML/Resources/DTLN_AEC_128_Part2.mlpackage"
-            "Sources/DTLNAecCoreML/Resources/DTLN_AEC_512_Part1.mlpackage"
-            "Sources/DTLNAecCoreML/Resources/DTLN_AEC_512_Part2.mlpackage"
+            "Sources/DTLNAec128/Resources/DTLN_AEC_128_Part1.mlpackage"
+            "Sources/DTLNAec128/Resources/DTLN_AEC_128_Part2.mlpackage"
+            "Sources/DTLNAec256/Resources/DTLN_AEC_256_Part1.mlpackage"
+            "Sources/DTLNAec256/Resources/DTLN_AEC_256_Part2.mlpackage"
+            "Sources/DTLNAec512/Resources/DTLN_AEC_512_Part1.mlpackage"
+            "Sources/DTLNAec512/Resources/DTLN_AEC_512_Part2.mlpackage"
           )
 
           missing=0
