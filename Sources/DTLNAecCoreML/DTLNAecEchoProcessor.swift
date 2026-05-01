@@ -190,12 +190,12 @@ public final class DTLNAecEchoProcessor {
   // of redoing the forward FFT on the same samples.
   private var micFftRealBuffer: [Float]
   private var micFftImagBuffer: [Float]
-  private var magnitudeSquaredBuffer: [Float]  // Size: fftBins for vDSP magnitude calculation
 
   // Per-frame scratch buffers, preallocated once and reused. Without these,
   // each frame freed/allocated ~10 transient [Float]s on the hot path.
   private var micMagBuffer: [Float]  // size: fftBins (mic magnitude spectrum)
   private var lpbMagBuffer: [Float]  // size: fftBins (loopback magnitude spectrum)
+  private var maskScratch: [Float]  // size: fftBins (mask extracted from MLMultiArray as fp32)
   private var frameOutputBuffer: [Float]  // size: blockLen (IFFT time-domain output)
   private var frameResultBuffer: [Float]  // size: blockLen (Part2 model output, time domain)
   private var prefixReadBuffer: [Float]  // size: blockShift (ring prefix scratch)
@@ -245,11 +245,10 @@ public final class DTLNAecEchoProcessor {
     fftImagBuffer = [Float](repeating: 0, count: Self.blockLen / 2)
     micFftRealBuffer = [Float](repeating: 0, count: Self.blockLen / 2)
     micFftImagBuffer = [Float](repeating: 0, count: Self.blockLen / 2)
-    // For vDSP magnitude calculation
-    magnitudeSquaredBuffer = [Float](repeating: 0, count: Self.fftBins)
     // Per-frame scratch (avoid hot-path allocations)
     micMagBuffer = [Float](repeating: 0, count: Self.fftBins)
     lpbMagBuffer = [Float](repeating: 0, count: Self.fftBins)
+    maskScratch = [Float](repeating: 0, count: Self.fftBins)
     frameOutputBuffer = [Float](repeating: 0, count: Self.blockLen)
     frameResultBuffer = [Float](repeating: 0, count: Self.blockLen)
     prefixReadBuffer = [Float](repeating: 0, count: Self.blockShift)
@@ -356,10 +355,12 @@ public final class DTLNAecEchoProcessor {
 
   private func initializeStates() throws {
     let stateShape = [1, Self.numLayers, numUnits, 2] as [NSNumber]
-    // Try float32 for all models and see if there's a type mismatch
-    let stateType: MLMultiArrayDataType = .float32
-    states1 = try MLMultiArray(shape: stateShape, dataType: stateType)
-    states2 = try MLMultiArray(shape: stateShape, dataType: stateType)
+    // fp32 matches the model's `states_in` port. fp16 was A/B'd (RMS ratio
+    // held at 1.02x) but regressed P99 by 9-24% across all 3 model sizes on
+    // the ANE — the model's state input is fp32-native, so fp16 adds an
+    // inbound conversion that outweighs the half-size copyStates memcpy.
+    states1 = try MLMultiArray(shape: stateShape, dataType: .float32)
+    states2 = try MLMultiArray(shape: stateShape, dataType: .float32)
     resetStates()
   }
 
@@ -516,13 +517,15 @@ public final class DTLNAecEchoProcessor {
   /// - Parameter samples: Microphone audio at 16kHz, Float format
   /// - Returns: Echo-cancelled audio samples
   public func processNearEnd(_ samples: [Float]) -> [Float] {
+    os_unfair_lock_lock(&processingLock)
+    defer { os_unfair_lock_unlock(&processingLock) }
+
+    // isInitialized must be checked under the lock — concurrent unloadModels
+    // could nil the model pointers between guard and use otherwise.
     guard isInitialized else {
       logger.warning("DTLN-aec not initialized, passing through")
       return samples
     }
-
-    os_unfair_lock_lock(&processingLock)
-    defer { os_unfair_lock_unlock(&processingLock) }
 
     pendingMicRing.append(contentsOf: samples)
     // Pre-size the output: every full frame produces exactly blockShift
@@ -546,7 +549,13 @@ public final class DTLNAecEchoProcessor {
       let newMicPeak = shiftAndAppend(buffer: &micBuffer, newSamples: prefixReadBuffer)
       pendingLoopbackRing.copyPrefix(into: &prefixReadBuffer, count: Self.blockShift)
       let newLpbPeak = shiftAndAppend(buffer: &loopbackBuffer, newSamples: prefixReadBuffer)
-      micBufferPeak = max(micBufferPeak * 0.75, newMicPeak)  // Decaying peak tracker
+      // Rolling peak estimate for the 512-sample window: take the new 128
+      // samples' peak and decay the previous estimate (0.75 ≈ 19ms half-life
+      // at 8ms/frame), avoiding a full vDSP_maxmgv scan per frame. This
+      // feeds LinkedGainController's own 1ms-attack/100ms-release envelope —
+      // the two stages are intentionally layered (cheap rolling peak +
+      // perceptual envelope), not redundant.
+      micBufferPeak = max(micBufferPeak * 0.75, newMicPeak)
       loopbackBufferPeak = max(loopbackBufferPeak * 0.75, newLpbPeak)
 
       pendingMicRing.removeFirst(Self.blockShift)
@@ -804,15 +813,14 @@ public final class DTLNAecEchoProcessor {
     samples.withUnsafeBufferPointer { srcPtr in
       realBuf.withUnsafeMutableBufferPointer { realPtr in
         imagBuf.withUnsafeMutableBufferPointer { imagPtr in
-          // De-interleave samples into split-complex (even→real, odd→imag).
-          vDSP_vsadd(
-            srcPtr.baseAddress!, 2, [Float](repeating: 0, count: 1), realPtr.baseAddress!, 1,
-            vDSP_Length(halfLen))
-          vDSP_vsadd(
-            srcPtr.baseAddress! + 1, 2, [Float](repeating: 0, count: 1), imagPtr.baseAddress!, 1,
-            vDSP_Length(halfLen))
           var splitComplex = DSPSplitComplex(
             realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+          // De-interleave samples into split-complex (even→real, odd→imag) —
+          // the standard preprocessing for vDSP's packed-real forward FFT.
+          srcPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfLen) {
+            cPtr in
+            vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(halfLen))
+          }
           vDSP_fft_zrip(fftSetup, &splitComplex, 1, Self.fftLog2n, FFTDirection(FFT_FORWARD))
         }
       }
@@ -881,44 +889,40 @@ public final class DTLNAecEchoProcessor {
 
     let halfLen = Self.blockLen / 2
 
-    // Resolve mask pointer once per frame (was a closure per bin in the loop).
-    let maskIsFloat16 = mask.dataType == .float16
-    let maskPtr16: UnsafeMutablePointer<Float16>? =
-      maskIsFloat16 ? mask.dataPointer.assumingMemoryBound(to: Float16.self) : nil
-    let maskPtr32: UnsafeMutablePointer<Float>? =
-      maskIsFloat16 ? nil : mask.dataPointer.assumingMemoryBound(to: Float.self)
-    @inline(__always) func m(_ i: Int) -> Float {
-      maskIsFloat16 ? Float(maskPtr16![i]) : maskPtr32![i]
-    }
+    // Pre-extract mask into fp32 scratch so the per-bin loop can use vDSP_vmul
+    // and avoid a fp16/fp32 branch per bin. One vImage call handles both
+    // precisions; for fp32 input it's a memcpy.
+    extractFromMLArrayInto(mask, &maskScratch, count: Self.fftBins)
 
     realBuf.withUnsafeMutableBufferPointer { realPtr in
       imagBuf.withUnsafeMutableBufferPointer { imagPtr in
-        var splitComplex = DSPSplitComplex(
-          realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+        maskScratch.withUnsafeBufferPointer { maskPtr in
+          var splitComplex = DSPSplitComplex(
+            realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
 
-        // Apply mask with proper handling of packed DC/Nyquist:
-        // DC bin (index 0) lives in realp[0], Nyquist (index fftBins-1) in imagp[0].
-        realPtr[0] *= m(0)
-        imagPtr[0] *= m(Self.fftBins - 1)
+          // Packed DC/Nyquist live in realp[0]/imagp[0]; multiply scalarly.
+          realPtr[0] *= maskPtr[0]
+          imagPtr[0] *= maskPtr[Self.fftBins - 1]
 
-        // Regular bins 1..fftBins-2.
-        for i in 1..<(Self.fftBins - 1) {
-          let mi = m(i)
-          realPtr[i] *= mi
-          imagPtr[i] *= mi
-        }
+          // Regular bins 1..fftBins-2: in-place vector multiply on real + imag.
+          let midCount = vDSP_Length(Self.fftBins - 2)
+          vDSP_vmul(
+            realPtr.baseAddress! + 1, 1, maskPtr.baseAddress! + 1, 1,
+            realPtr.baseAddress! + 1, 1, midCount)
+          vDSP_vmul(
+            imagPtr.baseAddress! + 1, 1, maskPtr.baseAddress! + 1, 1,
+            imagPtr.baseAddress! + 1, 1, midCount)
 
-        // Inverse real FFT - vDSP handles conjugate symmetry internally.
-        vDSP_fft_zrip(fftSetup, &splitComplex, 1, Self.fftLog2n, FFTDirection(FFT_INVERSE))
+          // Inverse real FFT - vDSP handles conjugate symmetry internally.
+          vDSP_fft_zrip(fftSetup, &splitComplex, 1, Self.fftLog2n, FFTDirection(FFT_INVERSE))
 
-        // Unpack split-complex back to interleaved real samples.
-        output.withUnsafeMutableBufferPointer { outPtr in
-          vDSP_vsadd(
-            realPtr.baseAddress!, 1, [Float](repeating: 0, count: 1), outPtr.baseAddress!, 2,
-            vDSP_Length(halfLen))
-          vDSP_vsadd(
-            imagPtr.baseAddress!, 1, [Float](repeating: 0, count: 1), outPtr.baseAddress! + 1, 2,
-            vDSP_Length(halfLen))
+          // Unpack split-complex back to interleaved real samples.
+          output.withUnsafeMutableBufferPointer { outPtr in
+            outPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfLen) {
+              cPtr in
+              vDSP_ztoc(&splitComplex, 1, cPtr, 2, vDSP_Length(halfLen))
+            }
+          }
         }
       }
     }
@@ -940,8 +944,15 @@ public final class DTLNAecEchoProcessor {
     outputSamples.append(contentsOf: outputBuffer.prefix(Self.blockShift))
 
     let overlapCount = Self.blockLen - Self.blockShift  // 384
+    // Source [128, 512) and dest [0, 384) overlap on [128, 384) — must be memmove,
+    // not memcpy. UnsafeMutablePointer.update(from:count:) is memcpy semantics.
+    _ = outputBuffer.withUnsafeMutableBytes { rawPtr in
+      memmove(
+        rawPtr.baseAddress!,
+        rawPtr.baseAddress! + Self.blockShift * MemoryLayout<Float>.stride,
+        overlapCount * MemoryLayout<Float>.stride)
+    }
     outputBuffer.withUnsafeMutableBufferPointer { ptr in
-      ptr.baseAddress!.update(from: ptr.baseAddress! + Self.blockShift, count: overlapCount)
       ptr.baseAddress!.advanced(by: overlapCount).update(repeating: 0, count: Self.blockShift)
     }
   }
@@ -1029,14 +1040,16 @@ public final class DTLNAecEchoProcessor {
 
   // MARK: - Numeric Validation
 
-  /// Check if array contains any NaN or Inf values
+  /// Check if array contains any NaN or Inf values.
+  /// Uses sum-of-squares as a single vectorized reduction: NaN propagates
+  /// (NaN² = NaN, Σ NaN = NaN), and ±Inf squared is +Inf which also fails
+  /// `isFinite`. Replaces a 512-iter scalar branch loop on the hot path.
   private func containsInvalidNumerics(_ array: [Float]) -> Bool {
-    for value in array {
-      if value.isNaN || value.isInfinite {
-        return true
-      }
+    var sumOfSquares: Float = 0
+    array.withUnsafeBufferPointer { ptr in
+      vDSP_svesq(ptr.baseAddress!, 1, &sumOfSquares, vDSP_Length(array.count))
     }
-    return false
+    return !sumOfSquares.isFinite
   }
 
   /// Clip array values to [-1, 1] range in place
